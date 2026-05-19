@@ -1,20 +1,18 @@
 import CalendarManagerMock from "@calcom/features/calendars/lib/__mocks__/CalendarManager";
 import prismaMock from "@calcom/testing/lib/__mocks__/prismaMock";
-
-import { v4 as uuid } from "uuid";
-import { expect, it, describe, vi, beforeAll } from "vitest";
-
 import dayjs from "@calcom/dayjs";
 import { getLuckyUserService } from "@calcom/features/di/containers/LuckyUser";
-import { buildUser, buildBooking } from "@calcom/lib/test/builder";
+import { buildBooking, buildUser } from "@calcom/lib/test/builder";
 import { AttributeType, RRResetInterval, RRTimestampBasis } from "@calcom/prisma/enums";
-
-import { getIntervalStartDate, getIntervalEndDate } from "./getLuckyUser";
+import { v4 as uuid } from "uuid";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { getIntervalEndDate, getIntervalStartDate } from "./getLuckyUser";
 
 const luckyUserService = getLuckyUserService();
 
 type NonEmptyArray<T> = [T, ...T[]];
-type GetLuckyUserAvailableUsersType = NonEmptyArray<ReturnType<typeof buildUser>>;
+type LuckyUserTestUser = Omit<ReturnType<typeof buildUser>, "priority"> & { priority?: number | null };
+type GetLuckyUserAvailableUsersType = NonEmptyArray<LuckyUserTestUser>;
 
 vi.mock("@calcom/app-store/routing-forms/components/react-awesome-query-builder/widgets", () => ({
   default: {},
@@ -23,6 +21,13 @@ vi.mock("@calcom/app-store/routing-forms/components/react-awesome-query-builder/
 beforeAll(() => {
   vi.setSystemTime(new Date("2021-06-20T11:59:59Z"));
 });
+
+const baseEventType = {
+  id: 1,
+  isRRWeightsEnabled: false,
+  team: { rrResetInterval: RRResetInterval.MONTH, rrTimestampBasis: RRTimestampBasis.CREATED_AT },
+  includeNoShowInRRCalculation: false,
+} as const;
 
 it("can find lucky user with maximize availability", async () => {
   const users: GetLuckyUserAvailableUsersType = [
@@ -75,179 +80,187 @@ it("can find lucky user with maximize availability", async () => {
   ).resolves.toStrictEqual(users[1]);
 });
 
-it("can find lucky user with maximize availability and priority ranking", async () => {
-  const users: GetLuckyUserAvailableUsersType = [
-    buildUser({
+describe("priority ranking", () => {
+  beforeEach(() => {
+    CalendarManagerMock.getBusyCalendarTimes.mockResolvedValue({ success: true, data: [] });
+    prismaMock.outOfOfficeEntry.findMany.mockResolvedValue([]);
+    prismaMock.host.findMany.mockResolvedValue([]);
+    prismaMock.booking.findMany.mockResolvedValue([]);
+  });
+
+  it("treats missing priority as medium and falls back to least recently booked", async () => {
+    const mediumPriorityUser = buildUser({
       id: 1,
-      username: "test1",
-      name: "Test User 1",
-      email: "test1@example.com",
+      email: "medium@example.com",
       priority: 2,
       bookings: [
-        {
-          createdAt: new Date("2022-01-25T05:30:00.000Z"),
-        },
-        {
-          createdAt: new Date("2022-01-25T06:30:00.000Z"),
-        },
+        { createdAt: new Date("2022-01-25T05:30:00.000Z") },
+        { createdAt: new Date("2022-01-25T06:30:00.000Z") },
       ],
-    }),
-    buildUser({
+    });
+    const noPriorityUser = buildUser({
       id: 2,
-      username: "test2",
-      name: "Test User 2",
-      email: "test2@example.com",
-      bookings: [
-        {
-          createdAt: new Date("2022-01-25T04:30:00.000Z"),
-        },
-      ],
-    }),
-  ];
+      email: "nopriority@example.com",
+      priority: null,
+      bookings: [{ createdAt: new Date("2022-01-25T04:30:00.000Z") }],
+    });
+    const availableUsers: GetLuckyUserAvailableUsersType = [mediumPriorityUser, noPriorityUser];
+    prismaMock.user.findMany.mockResolvedValue(availableUsers);
 
-  CalendarManagerMock.getBusyCalendarTimes.mockResolvedValue({ success: true, data: [] });
-  prismaMock.outOfOfficeEntry.findMany.mockResolvedValue([]);
-
-  prismaMock.user.findMany.mockResolvedValue(users);
-  prismaMock.host.findMany.mockResolvedValue([]);
-  prismaMock.booking.findMany.mockResolvedValue([]);
-
-  // both users have medium priority (one user has no priority set, default to medium) so pick least recently booked
-  await expect(
-    luckyUserService.getLuckyUser({
-      availableUsers: users,
-      eventType: {
-        id: 1,
-        isRRWeightsEnabled: false,
-        team: {
-          rrResetInterval: RRResetInterval.MONTH,
-          rrTimestampBasis: RRTimestampBasis.CREATED_AT,
-        },
-        includeNoShowInRRCalculation: false,
-      },
+    const result = await luckyUserService.getLuckyUser({
+      availableUsers,
+      eventType: baseEventType,
       allRRHosts: [],
       routingFormResponse: null,
-    })
-  ).resolves.toStrictEqual(users[1]);
+    });
 
-  const userLowest = buildUser({
-    id: 1,
-    username: "test1",
-    name: "Test User 1",
-    email: "test1@example.com",
-    priority: 0,
-    bookings: [
-      {
-        createdAt: new Date("2022-01-25T03:30:00.000Z"),
-      },
-    ],
-  });
-  const userMedium = buildUser({
-    id: 2,
-    username: "test2",
-    name: "Test User 2",
-    email: "test2@example.com",
-    priority: 2,
-    bookings: [
-      {
-        createdAt: new Date("2022-01-25T04:30:00.000Z"),
-      },
-    ],
+    expect(result).toStrictEqual(noPriorityUser);
   });
 
-  const userHighest = buildUser({
-    id: 2,
-    username: "test2",
-    name: "Test User 2",
-    email: "test2@example.com",
-    priority: 4,
-    bookings: [
-      {
-        createdAt: new Date("2022-01-25T05:30:00.000Z"),
-      },
-    ],
-  });
+  it("picks the user with the highest priority regardless of booking recency", async () => {
+    const lowestPriorityUser = buildUser({
+      id: 1,
+      email: "lowest@example.com",
+      priority: 0,
+      bookings: [{ createdAt: new Date("2022-01-25T03:30:00.000Z") }],
+    });
+    const mediumPriorityUser = buildUser({
+      id: 2,
+      email: "medium@example.com",
+      priority: 2,
+      bookings: [{ createdAt: new Date("2022-01-25T04:30:00.000Z") }],
+    });
+    const highestPriorityUser = buildUser({
+      id: 3,
+      email: "highest@example.com",
+      priority: 4,
+      bookings: [{ createdAt: new Date("2022-01-25T05:30:00.000Z") }],
+    });
+    const availableUsers: GetLuckyUserAvailableUsersType = [
+      lowestPriorityUser,
+      mediumPriorityUser,
+      highestPriorityUser,
+    ];
+    prismaMock.user.findMany.mockResolvedValue(availableUsers);
 
-  const usersWithPriorities: GetLuckyUserAvailableUsersType = [userLowest, userMedium, userHighest];
-  prismaMock.user.findMany.mockResolvedValue(usersWithPriorities);
-  prismaMock.booking.findMany.mockResolvedValue([]);
-  prismaMock.host.findMany.mockResolvedValue([]);
-  // pick the user with the highest priority
-  await expect(
-    luckyUserService.getLuckyUser({
-      availableUsers: usersWithPriorities,
-      eventType: {
-        id: 1,
-        isRRWeightsEnabled: false,
-        team: { rrResetInterval: RRResetInterval.MONTH, rrTimestampBasis: RRTimestampBasis.CREATED_AT },
-        includeNoShowInRRCalculation: false,
-      },
+    const result = await luckyUserService.getLuckyUser({
+      availableUsers,
+      eventType: baseEventType,
       allRRHosts: [],
       routingFormResponse: null,
-    })
-  ).resolves.toStrictEqual(usersWithPriorities[2]);
+    });
 
-  const userLow = buildUser({
-    id: 1,
-    username: "test1",
-    name: "Test User 1",
-    email: "test1@example.com",
-    priority: 0,
-    bookings: [
-      {
-        createdAt: new Date("2022-01-25T02:30:00.000Z"),
-      },
-    ],
-  });
-  const userHighLeastRecentBooking = buildUser({
-    id: 2,
-    username: "test2",
-    name: "Test User 2",
-    email: "tes2t@example.com",
-    priority: 3,
-    bookings: [
-      {
-        createdAt: new Date("2022-01-25T03:30:00.000Z"),
-      },
-    ],
+    expect(result).toStrictEqual(highestPriorityUser);
   });
 
-  const userHighRecentBooking = buildUser({
-    id: 3,
-    username: "test3",
-    name: "Test User 3",
-    email: "test3@example.com",
-    priority: 3,
-    bookings: [
-      {
-        createdAt: new Date("2022-01-25T04:30:00.000Z"),
-      },
-    ],
-  });
+  it("picks the least recently booked user when two users share the highest priority", async () => {
+    const lowPriorityUser = buildUser({
+      id: 1,
+      email: "low@example.com",
+      priority: 0,
+      bookings: [{ createdAt: new Date("2022-01-25T02:30:00.000Z") }],
+    });
+    const highPriorityLeastRecent = buildUser({
+      id: 2,
+      email: "high-least-recent@example.com",
+      priority: 3,
+      bookings: [{ createdAt: new Date("2022-01-25T03:30:00.000Z") }],
+    });
+    const highPriorityMostRecent = buildUser({
+      id: 3,
+      email: "high-most-recent@example.com",
+      priority: 3,
+      bookings: [{ createdAt: new Date("2022-01-25T04:30:00.000Z") }],
+    });
+    const availableUsers: GetLuckyUserAvailableUsersType = [
+      lowPriorityUser,
+      highPriorityLeastRecent,
+      highPriorityMostRecent,
+    ];
+    prismaMock.user.findMany.mockResolvedValue(availableUsers);
 
-  const usersWithSamePriorities: GetLuckyUserAvailableUsersType = [
-    userLow,
-    userHighLeastRecentBooking,
-    userHighRecentBooking,
-  ];
-  prismaMock.user.findMany.mockResolvedValue(usersWithSamePriorities);
-  prismaMock.booking.findMany.mockResolvedValue([]);
-  prismaMock.host.findMany.mockResolvedValue([]);
-
-  // pick the least recently booked user of the two with the highest priority
-  await expect(
-    luckyUserService.getLuckyUser({
-      availableUsers: usersWithSamePriorities,
-      eventType: {
-        id: 1,
-        isRRWeightsEnabled: false,
-        team: { rrResetInterval: RRResetInterval.MONTH, rrTimestampBasis: RRTimestampBasis.CREATED_AT },
-        includeNoShowInRRCalculation: false,
-      },
+    const result = await luckyUserService.getLuckyUser({
+      availableUsers,
+      eventType: baseEventType,
       allRRHosts: [],
       routingFormResponse: null,
-    })
-  ).resolves.toStrictEqual(usersWithSamePriorities[1]);
+    });
+
+    expect(result).toStrictEqual(highPriorityLeastRecent);
+  });
+
+  it("returns the only candidate when there is a single available user", async () => {
+    const singleUser = buildUser({
+      id: 1,
+      email: "only@example.com",
+      priority: 2,
+      bookings: [{ createdAt: new Date("2022-01-25T05:30:00.000Z") }],
+    });
+    const availableUsers: GetLuckyUserAvailableUsersType = [singleUser];
+    prismaMock.user.findMany.mockResolvedValue(availableUsers);
+
+    const result = await luckyUserService.getLuckyUser({
+      availableUsers,
+      eventType: baseEventType,
+      allRRHosts: [],
+      routingFormResponse: null,
+    });
+
+    expect(result).toStrictEqual(singleUser);
+  });
+
+  it("picks priority 1 over priority 0 when both users have identical booking recency", async () => {
+    const sharedBookingTime = new Date("2022-01-25T05:00:00.000Z");
+    const minPriorityUser = buildUser({
+      id: 1,
+      email: "min@example.com",
+      priority: 0,
+      bookings: [{ createdAt: sharedBookingTime }],
+    });
+    const onePriorityUser = buildUser({
+      id: 2,
+      email: "one@example.com",
+      priority: 1,
+      bookings: [{ createdAt: sharedBookingTime }],
+    });
+    const availableUsers: GetLuckyUserAvailableUsersType = [minPriorityUser, onePriorityUser];
+    prismaMock.user.findMany.mockResolvedValue(availableUsers);
+
+    const result = await luckyUserService.getLuckyUser({
+      availableUsers,
+      eventType: baseEventType,
+      allRRHosts: [],
+      routingFormResponse: null,
+    });
+
+    expect(result).toStrictEqual(onePriorityUser);
+  });
+
+  it("picks the user with no prior bookings over a user with prior bookings at equal priority", async () => {
+    const userWithBooking = buildUser({
+      id: 1,
+      email: "with-booking@example.com",
+      priority: 2,
+      bookings: [{ createdAt: new Date("2022-01-25T05:30:00.000Z") }],
+    });
+    const userWithNoBookings = buildUser({
+      id: 2,
+      email: "no-bookings@example.com",
+      priority: 2,
+      bookings: [],
+    });
+    const availableUsers: GetLuckyUserAvailableUsersType = [userWithBooking, userWithNoBookings];
+    prismaMock.user.findMany.mockResolvedValue(availableUsers);
+
+    const result = await luckyUserService.getLuckyUser({
+      availableUsers,
+      eventType: baseEventType,
+      allRRHosts: [],
+      routingFormResponse: null,
+    });
+
+    expect(result).toStrictEqual(userWithNoBookings);
+  });
 });
 
 describe("maximize availability and weights", () => {
