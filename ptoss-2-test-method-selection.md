@@ -84,12 +84,12 @@ Arquivo: `packages/features/schedules/lib/date-ranges.ts`
 
 | Integrante | Função sugerida | Força principal |
 | --- | --- | --- |
-| 1 | `getPrefetchMonthCount` | MC/DC e regras condicionais |
-| 2 | `getAvailabilityFromSchedule` | Agrupamento funcional e branches simples |
-| 3 | `parseTimeString` | Análise de valor limite |
-| 4 | `computeEffectiveStateAcrossTeams` | Tabela de decisão e MC/DC |
-| 5 | `intersect` | Interseção de intervalos |
-| 6 | `subtract` | Subtração de intervalos e cobertura de branches |
+| Rodrigo | `getPrefetchMonthCount` | MC/DC e regras condicionais |
+| Eduardo | `getAvailabilityFromSchedule` | Agrupamento funcional e branches simples |
+| Anderson | `parseTimeString` | Análise de valor limite |
+| Joaquim | `computeEffectiveStateAcrossTeams` | Tabela de decisão e MC/DC |
+| Bruno | `intersect` | Interseção de intervalos |
+| John | `subtract` | Subtração de intervalos e cobertura de branches |
 
 ## Observação
 
